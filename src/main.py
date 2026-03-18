@@ -1,5 +1,6 @@
 import asyncio
 import builtins as _builtins
+import requests
 import json
 import os
 import re
