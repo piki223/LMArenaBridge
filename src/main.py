@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Optional, Dict, List
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlsplit
+import reconfigure
 
 import uvicorn
 from camoufox.async_api import AsyncCamoufox
@@ -432,7 +433,8 @@ def _coerce_message_content_to_text(content) -> str:
             elif isinstance(part, str):
                 parts.append(part)
         return "\n".join([p for p in parts if p is not None]).strip()
-    return str(content)
+    
+    
 
 
 async def process_message_content(content, model_capabilities: dict) -> tuple[str, List[dict]]:
@@ -598,6 +600,7 @@ RECAPTCHA_EXPIRY: datetime = datetime.now(timezone.utc) - timedelta(days=365)
 # --- Helper Functions ---
 
 def get_config():
+    
     global current_token_index, _LAST_CONFIG_FILE
     # If tests or callers swap CONFIG_FILE at runtime, reset the token round-robin index so token selection
     # is deterministic per config file.
@@ -621,6 +624,13 @@ def get_config():
         debug_print(f"⚠️  Error setting config defaults: {e}")
 
     return config
+
+    env_token = os.getenv("ARENA_AUTH_TOKEN")
+    
+    if env_token:
+        config["auth_tokens"] = [env_token]
+    
+    return str(content)
 
 
 def load_usage_stats():
