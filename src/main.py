@@ -4722,4 +4722,4 @@ if __name__ == "__main__":
     print(f"🔐 Login: http://localhost:{PORT}/login")
     print(f"📚 API Base URL: http://localhost:{PORT}/api/v1")
     print("=" * 60)
-    uvicorn.run(app, host="1.1.1.1", port=PORT)
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
