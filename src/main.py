@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Optional, Dict, List
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlsplit
-import reconfigure
 
 import uvicorn
 from camoufox.async_api import AsyncCamoufox
