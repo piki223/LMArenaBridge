@@ -623,14 +623,16 @@ def get_config():
     except Exception as e:
         debug_print(f"⚠️  Error setting config defaults: {e}")
 
-    return config
+    import os
 
-    env_token = os.getenv("ARENA_AUTH_TOKEN")
-    
+    env_token = os.getenv("ARENA_AUTH_TOKEN", "").strip()
+
     if env_token:
-        config["auth_tokens"] = [env_token]
-    
-    return str(content)
+        if "auth_tokens" not in config or not isinstance(config["auth_tokens"], list):
+            config["auth_tokens"] = []
+        if env_token not in config["auth_tokens"]:
+            config["auth_tokens"].append(env_token)
+            debug_print("✅ Loaded ARENA_AUTH_TOKEN from environment")
 
 
 def load_usage_stats():
