@@ -6,6 +6,10 @@
 app = 'lmarenabridge-piki223'
 primary_region = 'fra'
 
+[env]
+  PORT = "8080"
+
+
 [build]
 
 [http_service]
