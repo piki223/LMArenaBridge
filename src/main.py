@@ -1,7 +1,5 @@
 import asyncio
 import builtins as _builtins
-import requests
-import cloudscraper as _cs
 import json
 import os
 import re
@@ -26,6 +24,8 @@ from starlette.responses import HTMLResponse, RedirectResponse, StreamingRespons
 from fastapi.security import APIKeyHeader
 
 import httpx
+import requests
+import cloudscraper
 
 # Import from modularized modules
 from . import constants
@@ -315,42 +315,43 @@ async def upload_image_to_lmarena(image_data: bytes, mime_type: str, filename: s
             "Referer": "https://lmarena.ai/?mode=direct",
         })
         
-        import cloudscraper as _cs
         def _cs_upload():
-            scraper = _cs.create_scraper()
+            scraper = cloudscraper.create_scraper()
             return scraper.post(
                 "https://lmarena.ai/?mode=direct",
                 headers=request_headers,
                 data=json.dumps([filename, mime_type]),
                 timeout=30.0,
             )
+
         try:
             response = await asyncio.to_thread(_cs_upload)
             response.raise_for_status()
-        except (_cs.exceptions.CloudflareException, requests.exceptions.RequestException) as e:
+        except (cloudscraper.exceptions.CloudflareException, requests.exceptions.RequestException) as e:
             debug_print(f"❌ Error while requesting upload URL: {e}")
             return None
-            
-            # Parse response - format: 0:{...}\n1:{...}\n
-            try:
-                lines = response.text.strip().split('\n')
-                upload_data = None
-                for line in lines:
-                    if line.startswith('1:'):
-                        upload_data = json.loads(line[2:])
-                        break
-                
-                if not upload_data or not upload_data.get('success'):
-                    debug_print(f"❌ Failed to get upload URL: {response.text[:200]}")
-                    return None
-                
-                upload_url = upload_data['data']['uploadUrl']
-                key = upload_data['data']['key']
-                debug_print(f"✅ Got upload URL and key: {key}")
-            except (json.JSONDecodeError, KeyError, IndexError) as e:
-                debug_print(f"❌ Failed to parse upload URL response: {e}")
+
+        # Parse response - format: 0:{...}\n1:{...}\n
+        try:
+            lines = response.text.strip().split('\n')
+            upload_data = None
+            for line in lines:
+                if line.startswith('1:'):
+                    upload_data = json.loads(line[2:])
+                    break
+
+            if not upload_data or not upload_data.get('success'):
+                debug_print(f"❌ Failed to get upload URL: {response.text[:200]}")
                 return None
-            
+
+            upload_url = upload_data['data']['uploadUrl']
+            key = upload_data['data']['key']
+            debug_print(f"✅ Got upload URL and key: {key}")
+        except (json.JSONDecodeError, KeyError, IndexError) as e:
+            debug_print(f"❌ Failed to parse upload URL response: {e}")
+            return None
+
+        async with httpx.AsyncClient() as client:
             # Step 2: Upload image to R2 storage
             debug_print(f"📤 Step 2: Uploading image to R2 storage ({len(image_data)} bytes)")
             try:
@@ -368,12 +369,12 @@ async def upload_image_to_lmarena(image_data: bytes, mime_type: str, filename: s
             except httpx.HTTPError as e:
                 debug_print(f"❌ HTTP error while uploading image: {e}")
                 return None
-            
+
             # Step 3: Get signed download URL (uses different Next-Action)
             debug_print(f"📤 Step 3: Requesting signed download URL")
             request_headers_step3 = request_headers.copy()
             request_headers_step3["Next-Action"] = signed_url_action_id
-            
+
             try:
                 response = await client.post(
                     "https://lmarena.ai/?mode=direct",
@@ -388,7 +389,7 @@ async def upload_image_to_lmarena(image_data: bytes, mime_type: str, filename: s
             except httpx.HTTPError as e:
                 debug_print(f"❌ HTTP error while requesting download URL: {e}")
                 return None
-            
+
             # Parse response
             try:
                 lines = response.text.strip().split('\n')
@@ -397,11 +398,11 @@ async def upload_image_to_lmarena(image_data: bytes, mime_type: str, filename: s
                     if line.startswith('1:'):
                         download_data = json.loads(line[2:])
                         break
-                
+
                 if not download_data or not download_data.get('success'):
                     debug_print(f"❌ Failed to get download URL: {response.text[:200]}")
                     return None
-                
+
                 download_url = download_data['data']['url']
                 debug_print(f"✅ Got signed download URL: {download_url[:100]}...")
                 return (key, download_url)
@@ -432,8 +433,7 @@ def _coerce_message_content_to_text(content) -> str:
             elif isinstance(part, str):
                 parts.append(part)
         return "\n".join([p for p in parts if p is not None]).strip()
-    
-    
+    return str(content)
 
 
 async def process_message_content(content, model_capabilities: dict) -> tuple[str, List[dict]]:
@@ -599,7 +599,6 @@ RECAPTCHA_EXPIRY: datetime = datetime.now(timezone.utc) - timedelta(days=365)
 # --- Helper Functions ---
 
 def get_config():
-    
     global current_token_index, _LAST_CONFIG_FILE
     # If tests or callers swap CONFIG_FILE at runtime, reset the token round-robin index so token selection
     # is deterministic per config file.
@@ -618,20 +617,26 @@ def get_config():
 
     # Ensure default keys exist
     try:
+        if config is None or not isinstance(config, dict):
+            config = {}
         _config_module._apply_config_defaults(config)
     except Exception as e:
         debug_print(f"⚠️  Error setting config defaults: {e}")
+        if config is None or not isinstance(config, dict):
+            config = {}
 
-    import os
-
+    # Load Arena auth token from Fly/host environment if present
     env_token = os.getenv("ARENA_AUTH_TOKEN", "").strip()
-
     if env_token:
-        if "auth_tokens" not in config or not isinstance(config["auth_tokens"], list):
-            config["auth_tokens"] = []
-        if env_token not in config["auth_tokens"]:
-            config["auth_tokens"].append(env_token)
+        auth_tokens = config.get("auth_tokens")
+        if not isinstance(auth_tokens, list):
+            auth_tokens = []
+            config["auth_tokens"] = auth_tokens
+        if env_token not in auth_tokens:
+            auth_tokens.append(env_token)
             debug_print("✅ Loaded ARENA_AUTH_TOKEN from environment")
+
+    return config
 
 
 def load_usage_stats():
@@ -1321,8 +1326,9 @@ async def dashboard(session: str = Depends(get_current_session)):
         stats_html = "<tr><td colspan='2' class='no-data'>No usage data yet</td></tr>"
 
     # Check token status
-    token_status = "✅ Configured" if config.get("auth_token") else "❌ Not Set"
-    token_class = "status-good" if config.get("auth_token") else "status-bad"
+    token_present = bool(config.get("auth_tokens")) or bool(config.get("auth_token"))
+    token_status = "✅ Configured" if token_present else "❌ Not Set"
+    token_class = "status-good" if token_present else "status-bad"
     
     cf_status = "✅ Configured" if config.get("cf_clearance") else "❌ Not Set"
     cf_class = "status-good" if config.get("cf_clearance") else "status-bad"
@@ -2640,19 +2646,8 @@ async def api_chat_completions(request: Request, api_key: dict = Depends(rate_li
                     # If we get here, return the response (success or non-retryable error)
                     response.raise_for_status()
                     return response
-                
-                    import os
-                    if config is None or not isinstance(config, dict):config = {}
-                    
-                    
-                    env_token = os.getenv("ARENA_AUTH_TOKEN", "base64-eyJhY2Nlc3NfdG9rZW4iOiJleUpoYkdjaU9pSkZVekkxTmlJc0ltdHBaQ0k2SWpBNVlUSTNPVFl6TFRjek5tWXROR00wWmkwNU5HSXlMV0ptWXpSaU1XSTJNV1k0T0NJc0luUjVjQ0k2SWtwWFZDSjkuZXlKcGMzTWlPaUpvZEhSd2N6b3ZMMmgxYjJkNmIyVnhlbU55WkhacmQzUjJiMlJwTG5OMWNHRmlZWE5sTG1OdkwyRjFkR2d2ZGpFaUxDSnpkV0lpT2lKak56bGpPREJpTkMxbE5tTXhMVFJrTmpndE9HUTBaUzFqWVRJMlpXSm1ZMlkxTmpNaUxDSmhkV1FpT2lKaGRYUm9aVzUwYVdOaGRHVmtJaXdpWlhod0lqb3hOemN6T0RJNU1UazVMQ0pwWVhRaU9qRTNOek00TWpVMU9Ua3NJbVZ0WVdsc0lqb2liV0ZuZVdGeVltRnliblZ6UUdkdFlXbHNMbU52YlNJc0luQm9iMjVsSWpvaUlpd2lZWEJ3WDIxbGRHRmtZWFJoSWpwN0luQnliM1pwWkdWeUlqb2laMjl2WjJ4bElpd2ljSEp2ZG1sa1pYSnpJanBiSW1kdmIyZHNaU0pkZlN3aWRYTmxjbDl0WlhSaFpHRjBZU0k2ZXlKaGRtRjBZWEpmZFhKc0lqb2lhSFIwY0hNNkx5OXNhRE11WjI5dloyeGxkWE5sY21OdmJuUmxiblF1WTI5dEwyRXZRVU5uT0c5alNtWkRWRmRWUWxwSVNHSlRZMHMwVmtjM1NrbERVM0p4Umw5bGJuWlhSelJFTjFkamNWaFBiREZyT1Zsc2NUZDJjVGc5Y3prMkxXTWlMQ0psYldGcGJDSTZJbTFoWjNsaGNtSmhjbTUxYzBCbmJXRnBiQzVqYjIwaUxDSmxiV0ZwYkY5MlpYSnBabWxsWkNJNmRISjFaU3dpWm5Wc2JGOXVZVzFsSWpvaVFtRnlibWtpTENKcFpDSTZJakF4T1dKaU5UTmtMVE5sT1dRdE4yTmtPQzA1TVRnNExUVmtZbUV4WXpnMk1tVTJOaUlzSW1semN5STZJbWgwZEhCek9pOHZZV05qYjNWdWRITXVaMjl2WjJ4bExtTnZiU0lzSW14aGMzUmZiR2x1YTJWa1gzTjFjR0ZpWVhObFgzVnpaWEpmYVdRaU9pSTVPR1V4WkRZd09TMWxObVF3TFRReFpESXRPV1ZrWXkxbVltUTJZMlEyTkRoaFpqQWlMQ0p1WVcxbElqb2lRbUZ5Ym1raUxDSndhRzl1WlY5MlpYSnBabWxsWkNJNlptRnNjMlVzSW5CcFkzUjFjbVVpT2lKb2RIUndjem92TDJ4b015NW5iMjluYkdWMWMyVnlZMjl1ZEdWdWRDNWpiMjB2WVM5QlEyYzRiMk5LWmtOVVYxVkNXa2hJWWxOalN6UldSemRLU1VOVGNuRkdYMlZ1ZGxkSE5FUTNWMk54V0U5c01XczVXV3h4TjNaeE9EMXpPVFl0WXlJc0luQnliM1pwWkdWeVgybGtJam9pTVRBNU5UWTVOamMzTVRRek5EWXdORGt6TURZNUlpd2ljM1ZpSWpvaU1UQTVOVFk1TmpjM01UUXpORFl3TkRrek1EWTVJbjBzSW5KdmJHVWlPaUpoZFhSb1pXNTBhV05oZEdWa0lpd2lZV0ZzSWpvaVlXRnNNU0lzSW1GdGNpSTZXM3NpYldWMGFHOWtJam9pYjJGMWRHZ2lMQ0owYVcxbGMzUmhiWEFpT2pFM056TTRNalUxT1RoOVhTd2ljMlZ6YzJsdmJsOXBaQ0k2SWpObE1HVTBOVGt6TFdOaVlqTXRORFl4TWkwNVlUYzBMVE5oWVRNNU5ESmhOV1UzWWlJc0ltbHpYMkZ1YjI1NWJXOTFjeUk2Wm1Gc2MyVjkuRklXby10QzQyenBubDAyLTBBQktjU1lpOEw5VFBwXzJmdm9MRmY5RnlMSVVKcDgxLWFjd045dV82YWVMTUx6Z1Ezb1lYYnB4Mnk4YVlXQ1h1dWhXM1EiLCJ0b2tlbl90eXBlIjoiYmVhcmVyIiwiZXhwaXJlc19pbiI6MzYwMCwiZXhwaXJlc19hdCI6MTc3MzgyOTE5OSwicmVmcmVzaF90b2tlbiI6IjRpb2R0ZHBwaXN6diIsInVzZXIiOnsiaWQiOiJjNzljODBiNC1lNmMxLTRkNjgtOGQ0ZS1jYTI2ZWJmY2Y1NjMiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJlbWFpbCI6Im1hZ3lhcmJhcm51c0BnbWFpbC5jb20iLCJlbWFpbF9jb25maXJtZWRfYXQiOiIyMDI2LTAxLTEzVDAyOjQ0OjI4LjA3NTA4NVoiLCJwaG9uZSI6IiIsImNvbmZpcm1lZF9hdCI6IjIwMjYtMDEtMTNUMDI6NDQ6MjguMDc1MDg1WiIsImxhc3Rfc2lnbl9pbl9hdCI6IjIwMjYtMDMtMThUMDk6MTk6NTguNjQwMjE5WiIsImFwcF9tZXRhZGF0YSI6eyJwcm92aWRlciI6Imdvb2dsZSIsInByb3ZpZGVycyI6WyJnb29nbGUiXX0sInVzZXJfbWV0YWRhdGEiOnsiYXZhdGFyX3VybCI6Imh0dHBzOi8vbGgzLmdvb2dsZXVzZXJjb250ZW50LmNvbS9hL0FDZzhvY0pmQ1RXVUJaSEhiU2NLNFZHN0pJQ1NycUZfZW52V0c0RDdXY3FYT2wxazlZbHE3dnE4PXM5Ni1jIiwiZW1haWwiOiJtYWd5YXJiYXJudXNAZ21haWwuY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsImZ1bGxfbmFtZSI6IkJhcm5pIiwiaWQiOiIwMTliYjUzZC0zZTlkLTdjZDgtOTE4OC01ZGJhMWM4NjJlNjYiLCJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20iLCJsYXN0X2xpbmtlZF9zdXBhYmFzZV91c2VyX2lkIjoiOThlMWQ2MDktZTZkMC00MWQyLTllZGMtZmJkNmNkNjQ4YWYwIiwibmFtZSI6IkJhcm5pIiwicGhvbmVfdmVyaWZpZWQiOmZhbHNlLCJwaWN0dXJlIjoiaHR0c").strip()
 
-                    if env_token:
-                        if env_token not in config["auth_tokens"]:
-                            config["auth_tokens"].append(env_token)
-                            debug_print("✅ Loaded ARENA_AUTH_TOKEN from environment")
-
-                except (requests.exceptions.HTTPError, _cs.exceptions.CloudflareException) as e:
+                except (requests.exceptions.HTTPError, cloudscraper.exceptions.CloudflareException) as e:
                     # Handle HTTP errors from cloudscraper (requests-based)
                     status_code = getattr(getattr(e, 'response', None), 'status_code', None)
                     if status_code and status_code not in [429, 401]:
