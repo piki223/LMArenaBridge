@@ -1,6 +1,7 @@
 import asyncio
 import builtins as _builtins
 import requests
+import cloudscraper as _cs
 import json
 import os
 import re
