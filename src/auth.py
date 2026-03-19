@@ -21,6 +21,8 @@ import json
 import re
 import time
 from typing import Optional
+import requests
+import cloudscraper
 
 import httpx
 from fastapi import HTTPException
