@@ -3,6 +3,7 @@ import builtins as _builtins
 import json
 import os
 import re
+import requests
 import shutil
 import sys
 import uuid
@@ -311,7 +312,7 @@ async def upload_image_to_lmarena(image_data: bytes, mime_type: str, filename: s
             "Content-Type": "text/plain;charset=UTF-8",
             "Next-Action": upload_action_id,
             "Referer": "https://lmarena.ai/?mode=direct",
-        })
+        })  
         
         import cloudscraper as _cs
         def _cs_upload():
