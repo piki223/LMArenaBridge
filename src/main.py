@@ -325,7 +325,7 @@ async def upload_image_to_lmarena(image_data: bytes, mime_type: str, filename: s
         try:
             response = await asyncio.to_thread(_cs_upload)
             response.raise_for_status()
-        except (cloudscraper.exceptions.CloudflareException, requests.exceptions.RequestException) as e:
+        except (_cs.exceptions.CloudflareException, requests.exceptions.RequestException) as e:
             debug_print(f"❌ Error while requesting upload URL: {e}")
             return None
             
@@ -2628,7 +2628,7 @@ async def api_chat_completions(request: Request, api_key: dict = Depends(rate_li
                     response.raise_for_status()
                     return response
 
-                except (requests.exceptions.HTTPError, cloudscraper.exceptions.CloudflareException) as e:
+                except (requests.exceptions.HTTPError, _cs.exceptions.CloudflareException) as e:
                     # Handle HTTP errors from cloudscraper (requests-based)
                     status_code = getattr(getattr(e, 'response', None), 'status_code', None)
                     if status_code and status_code not in [429, 401]:
