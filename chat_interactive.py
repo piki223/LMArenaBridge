@@ -7,8 +7,8 @@ from openai import OpenAI
 import sys
 
 # Configuration
-BASE_URL = "http://localhost:8000/api/v1"
-API_KEY = "sk-lmab-50664b6f-87c7-4115-b630-eb38a9b55021"  # Replace with your API key
+BASE_URL = "https://lmarenabridge-piki223.fly.dev/api/v1"
+API_KEY = "sk-lmab-f127c038-68dd-4e35-97ef-3ad0fd862d55"  # Replace with your API key
 
 def list_available_models(client):
     """List all available models"""
